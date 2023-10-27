@@ -1,5 +1,13 @@
 from crate.theme.rtd.conf.cratedb_guides import *
 
+# Disable version chooser.
+html_context.update({
+    "display_version": False,
+    "current_version": None,
+    "versions": [],
+})
+
+# Configure link checker.
 linkcheck_ignore = [
     # Forbidden by WordPress
     "https://crate.io/wp-content/uploads/2018/11/copy_from_population_data.zip",
