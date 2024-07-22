@@ -1,5 +1,5 @@
-(hybrid-indexes)=
-# Hybrid Indexes
+(hybrid-index)=
+# Hybrid Index
 
 :::{include} /_include/links.md
 :::
