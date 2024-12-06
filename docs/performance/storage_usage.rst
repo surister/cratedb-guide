@@ -26,7 +26,8 @@ will take:
 - 510MB in PostgreSQL 16.1 (Debian 16.1-1.pgdg120+1)
 - 775MB in CrateDB 5.9.3 (3 nodes, default values)
 
-At first sight, it might look that CrateDB storage takes more than PostgreSQL, but we are comparing oranges to apples.
+At first sight, it might look that CrateDB storage takes more than PostgreSQL, but we need to dive deeper to really
+understand what is going on.
 
 ## Table of contents
 1. [How storage works](#Storage in CrateDB)
@@ -34,27 +35,28 @@ At first sight, it might look that CrateDB storage takes more than PostgreSQL, b
 3. [Disable indexing](#disable-indexing)
 4. [Disable columnar store](#disable-the-columnar-store)
 5. [Changing the compression algorithm](#changing-the-compression-algorithm)
-6. [Data normalization](#data-normalization)
+6. [All results](#all-results)
+7. [Data normalization](#data-normalization)
 
 ## How storage in CrateDB works.
-
-It is very important to know how storage works in CrateDB.
 
 CrateDB is a distributed database; nodes, shards, partitions and replicas are tightly integrated.
 
 When a table is created data is sharded and distributed among nodes, this means that the memory footprint depends on
 our replication and sharding strategy.
 
-Let's break down how the `775MB` was calculated, for `PostgreSQL` it was straightforward:
-```sql
-SELECT pg_size_pretty( pg_total_relation_size('taxi_january') );
-```
+Let's break down how the `775MB` in CrateDB and the 510MB in Postgres were obtained, for `Postgres` it was straightforward:
 
-When a table is created with default values, default values for shards and replicas are used.
+.. code-block:: sql
+SELECT pg_size_pretty( pg_total_relation_size('taxi_january') );
+
+But for CrateDB when a table is created, sharding and replication has to be taken into account.
 
 Issuing `create table my_table (my_column TEXT)` will create `max(4, num_data_nodes * 2)` shards.
 
 For example, a typical 3-node cluster, it will create:
+
+.. code-block::
 
 `max(4, 3 * 2)`
 
@@ -62,17 +64,31 @@ For example, a typical 3-node cluster, it will create:
 
 `6` shards
 
-On top of that, the default is the range `0-1`, so we will have maximum one replica, a replica multiplies the number of shards, so we will have
-`6 primary shards` and `6 replica shards`, physically distributed among the three nodes.
+On top of that, the default replication is the `0-1` range, so we will have a maximum of one replica, a replica multiplies the number of shards, so we will have
+`6 primary shards` and `6 replica shards`, `12 total shards` physically distributed among the three nodes.
 
 ![shards.png](shards.png)
 
-The total storage being used, can be calculated as the `avg size of 1 shard` * `total_shards`, in other words.
+You can see how many shards you have per node and table by querying the `sys.shards` table, or use this query to have a broad overlook:
 
+.. code-block:: sql
+
+SELECT
+  sum(num_docs) document_count,
+  node ['name'] node,
+  count(*) shard_count,
+  array_agg(table_name) shard_table_names
+FROM
+  sys.shards
+GROUP BY
+  node ['name']
+
+The total storage being used, can be calculated as the `avg size of 1 shard` * `total_shards`, in other words.
 
 To check this, on the current `taxi` table that was created:
 
-```sql
+.. code-block:: sql
+
 SELECT
   sum(size / 1_000_000) / count(*) as avg_mb_per_shard,
   sum(size) / 1_000_000 as total_mb
@@ -80,7 +96,6 @@ FROM
   sys.shards
 WHERE
   table_name = 'taxi'
-```
 
 |avg_mb_per_shard|total_mb|
  |-|-|
@@ -101,7 +116,7 @@ sh-5.1# du -sh ./* | sort -h
 
 As you can see, `~64M` that was gotten from querying `sys.shards`
 
-The techniques that we are going to apply will reduce the disk usage of the `avg size of 1 shard`
+The techniques that will be shown will reduce the disk usage of the `avg size of 1 shard`
 
 ## Reducing storage
 
@@ -125,14 +140,14 @@ In this guide, we will explore and see how these techniques affect storage size 
 
 By default, CrateDB creates indexes on every column; you can disable this when creating the table:
 
-```sql
+.. code-block:: sql
 CREATE TABLE taxi
 (
-    id          INTEGER,
-    sensor_code TEXT INDEX OFF -- sensor_code will not have an index
-    value       BIG INTEGER
+   "VendorID" BIGINT INDEX OFF,
+   "tpep_pickup_datetime" TIMESTAMP WITHOUT TIME ZONE INDEX OFF,
+   "tpep_dropoff_datetime" TIMESTAMP WITHOUT TIME ZONE INDEX OFF,
+    ...
 )
-```
 
 The index can only be disabled when the table is created if the table is already created, and it cannot be deleted it
 because there is data, it will have to be re-created.
@@ -141,9 +156,8 @@ One of the ways to achieve this is by renaming the tables, for example:
 
 1. Rename table 'taxi' (with INDEX) to 'taxi_deleteme' with:
 
-```sql
+.. code-block:: sql
 ALTER TABLE "taxi" RENAME TO "taxi_deleteme"
-```
 
 2. Create the new table named 'taxi'.
 
@@ -151,9 +165,8 @@ ALTER TABLE "taxi" RENAME TO "taxi_deleteme"
 
 4. Delete 'taxi_deleteme' with:
 
-```sql
+.. code-block:: sql
 DROP TABLE "taxi_deleteme"
-```
 
 > WARNING Dropping the table deletes the data, make sure that the copy was done correctly.
 > INFO: Indexing cannot be created afterward.
@@ -162,8 +175,7 @@ DROP TABLE "taxi_deleteme"
 
 |avg_mb_per_shard|total_mb|
  |-|-|
-|36|445|
-
+|53|635|
 
 Data was reduced `~18%`
 
@@ -171,55 +183,102 @@ Data was reduced `~18%`
 
 The columnar store can be disabled at table creation with
 
-```sql
-STORAGE
-WITH (columnstore = false)
-```
+.. code-block:: sql
+CREATE TABLE IF NOT EXISTS "doc"."taxi_nocolumnstore" (
+   "VendorID" BIGINT STORAGE WITH (
+      columnstore = false
+   ),
+   "tpep_pickup_datetime" TIMESTAMP WITHOUT TIME ZONE STORAGE WITH (
+      columnstore = false
+   ),
+   "tpep_dropoff_datetime" TIMESTAMP WITHOUT TIME ZONE STORAGE WITH (
+      columnstore = false
+   ),
+    ...
+)
 
-You can disable both index and columnar store at the same time:
-
-```sql
-url
-TEXT INDEX OFF STORAGE WITH (columnstore = false)
-```
 
 > As with indexing, you cannot re-add the column store once the table is created.
 
 ### Effects on storage
 
-Data was reduced: `x MB` - 20%
+|avg_mb_per_shard|total_mb|
+ |-|-|
+|53|639|
 
-### Effects on performance
-
-```query1```
-```query2```
-```query3```
-```query4```
+Data was reduced: `-18%`, similar to no index.
 
 ## Changing the compression algorithm
 
-Data is compressed when it is stored on disk, two options are available OPTION A (DEFAULT) and OPTION B.
+Data is compressed when it is stored on disk, two options are available default (LZ4) and best_compression.
 
-Option B might be less performant on certain queries, but it has less storage footprint.
+`best_compression` might be less performant on certain queries, but it has less storage footprint.
 
 You can change it via table definition:
 
-```sql
-sql
-```
+.. code-block:: sql
+CREATE TABLE IF NOT EXISTS "doc"."taxi_january_nocolumnstore" (
+   "VendorID" BIGINT STORAGE WITH (
+      columnstore = false
+   ),
+    ...
+) WITH (codec = 'best_compression')
 
 ### Effects on storage
 
-Data was reduced: `x MB` - 20%
+|avg_mb_per_shard|total_mb|
+|-|-|
+|44|536|
 
-### Effects on performance
+Data was reduced: `31.25%`
 
-```query1```
-```query2```
-```query3```
-```query4```
+## All results and what to do.
 
-## Data normalization
+In the following table, all the above results can be found, also different combinations of them:
+
+.. code-block:: sql
+
+SELECT
+  table_name,
+  SUM(num_docs) as records,
+  (SUM(size) / 1_000_000) as total_size_mb,
+  (SUM(size) / count(*)) / 1_000_000 as avg_size_per_shard_in_mb,
+  (SUM(size) / SUM(num_docs) :: DOUBLE) as avg_size_in_bytes_per_record
+FROM
+  sys.shards
+WHERE
+  PRIMARY
+GROUP BY
+  1
+ORDER BY
+  avg_size_per_shard_in_mb
+
+|table_name|records|total_size_mb|avg_size_per_shard_in_mb|avg_size_in_bytes_per_record|
+ |-|-|-|-|-|
+|"taxi_nocolumnstore_noindex_bestcompresion"|2964624|122|20|41.172756140407685|
+|"taxi_nocolumnstore_bestcompression"|2964624|205|34|69.38882367544754|
+|"taxi_noindex_bestcompression"|2964624|212|35|71.51773007302107|
+|"taxi_nocolumnstore_noindex"|2964624|237|39|80.03273905898354|
+|"taxi_bestcompresion"|2964624|290|48|98.0695295592291|
+|"taxi_noindex"|2964624|317|52|107.09909081219068|
+|"taxi_nocolumnstore"|2964624|319|53|107.62769578874084|
+|"taxi"|2964624|385|64|130.15281533172504|
+
+To recapitulate: `total_size_mb` is the sum of the disk used in `mb` of all the primary shards, all primary shards make the full table.
+By default every table will have a maximum of one replica.
+
+The original `775MB` can be calculated as:
+
+`64mb per shard * (6 primary shards + 6 replica shards) = 768`
+
+> We get `768 ~= 775` because in reality it's not exactly `64mb` per shard, we are ignoring decimals.
+> The goal is to give you an idea on how tweaking some CrateDB aspect can affect storage, being overly precise to the kilobyte level
+> does not matter too much.
+
+### What to do
+Normally TODO
+
+## Extra: Data normalization
 
 One of the most common ways to reduce storage usage is to not write data more than once, by normalizing your tables.
 
@@ -234,31 +293,3 @@ We are writing `column` two times, this table is in a normalized N2 state, if no
 For this table definition, for one million rows, there is a % storage reduction.
 
 You can read more about data normalization at [link]
-
-# Applying all at once
-
-We can apply all these techniques at the same time.
-
-```sql```
-
-### Effects on storage
-
-Data was reduced: `x MB` - 20%
-
-### Effects on performance
-
-```sql
-query1
-```
-
-```sql
-query2
-```
-
-```sql
-query3
-```
-
-```sql
-query4
-```
