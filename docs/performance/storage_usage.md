@@ -75,7 +75,7 @@ replica, a replica multiplies the number of shards, so we will have
 `6 primary shards` and `6 replica shards`, `12 total shards` physically distributed among the three
 nodes.
 
-![shards.png](shards.png)
+![CrateDB shards allocation](/_assets/img/performance/shards.png)
 
 You can see how many shards you have per node and table by querying the `sys.shards` table, or use
 this query to have a broad overlook:
