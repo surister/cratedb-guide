@@ -40,8 +40,8 @@ understand what is going on.
 3. [Disable indexing](#disable-indexing)
 4. [Disable columnar store](#disable-the-columnar-store)
 5. [Changing the compression algorithm](#changing-the-compression-algorithm)
-6. [All results](#all-results)
-7. [Data normalization](#data-normalization)
+6. [All results](#all-results-and-what-to-do)
+7. [Data normalization](#extra-data-normalization)
 
 ## How storage in CrateDB works.
 
