@@ -207,7 +207,7 @@ CREATE TABLE IF NOT EXISTS "doc"."taxi_nocolumnstore"(
 ### Effects on storage
 
 | avg_mb_per_shard | total_mb |
- |------------------|----------|
+|------------------|----------|
 | 53               | 639      |
 
 Data was reduced: `18%`, similar to `no_index`.
@@ -299,18 +299,18 @@ CREATE TABLE IF NOT EXISTS "doc"."taxi_nocolumnstore_noindex_bestcompresion" (
 
 ### What to do
 
-CrateDB default settings are optimized for performance.
+CrateDB's default settings are optimized for performance.
 
 If some columns will never be used for aggregations or groupings, there will be no performance penalty.
 That might change in the future as your use case and data needs evolve,
 re-adding indexes or column store at later stages will need re-creating tables, 
 which might need some downtime, depending on the setup.
 
-It is important to evaluate well the strategy and use case.
+When designing your data model, it is important to evaluate your current and future needs to minimize
+any future overhead.
 
 ## Extra: Data normalization
 
-One of the most common ways to reduce storage usage is to not write data more than once,
-by normalizing your tables.
+One of the most common ways to reduce storage size is to not write data more than once, by normalizing your tables.
 
 Read more about it in https://en.wikipedia.org/wiki/Database_normalization
