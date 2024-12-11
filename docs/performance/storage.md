@@ -112,11 +112,11 @@ sh-5.1# du -sh ./* | sort -h
 63M	./5
 ```
 
-The following techniques will reduce the disk usage of the `average size of 1 shard`
-
 ## Reducing storage
 
-Reducing disk usage often at the cost of performance.
+The following techniques can help to reduce the average size of one shard.
+
+Please note reducing disk usage often comes at the cost of performance.
 
 If there are columns that will not be used in aggregations (joins) and groupings (group by, order by),
 it will have no impact on performance and might make sense to reduce its storage footprint.
