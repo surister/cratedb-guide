@@ -1,15 +1,12 @@
 # Storage Usage
 
-CrateDB stores data in a row and column store, on top of that, it automatically creates an index, on
-reads
-the index will be leveraged, and depending on the query, it will use the most efficient store.
+CrateDB stores data in a row and column store, and automatically creates an index on top of that.
+On reads, the index will be leveraged: Depending on the query, the engine will use the most efficient store.
 
 This is one of the many features that makes CrateDB very fast when reading
-and aggregating data, but it has an impact on storage.
+and aggregating data, but it has an impact on storage size.
 
-We are going to
-use [Yellow taxi trip - January 2024](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
-which has 2_964_624 rows
+We are going to use [Yellow taxi trip - January 2024](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) which has 2_964_624 rows
 
 
 ```
@@ -30,9 +27,8 @@ Will take:
 - 510MB in PostgreSQL 16.1 (Debian 16.1-1.pgdg120+1)
 - 775MB in CrateDB 5.9.3 (3 nodes, default values)
 
-At first sight, it might look that CrateDB storage takes more than PostgreSQL, but we need to dive
-deeper to really
-understand what is going on.
+At first sight, it might look that CrateDB storage takes more than PostgreSQL,
+but we need to dive deeper to really understand what is going on.
 
 ## Table of contents
 
@@ -48,26 +44,23 @@ understand what is going on.
 
 CrateDB is a distributed database; nodes, shards, partitions and replicas are tightly integrated.
 
-When a table is created data is sharded and distributed among nodes, this means that the memory
-footprint depends on
-our replication and sharding strategy.
+When a table is created, data is sharded and distributed among nodes. This
+means that the memory footprint depends on our replication and sharding strategy.
 
-Let's break down how the `775MB` in CrateDB and the 510MB in Postgres were obtained, for `Postgres`
-it was straightforward:
+Let's break down how the `775MB` in CrateDB and the `510MB` in PostgreSQL were
+obtained. For `PostgreSQL` it was straightforward:
 
 ```sql
 SELECT pg_size_pretty(pg_total_relation_size('taxi_january'));
 ```
 
-But for CrateDB when a table is created, sharding and replication has to be taken into account.
+For CrateDB when a table is created, sharding and replication has to be taken into account.
 
-When a table is created with default values, it split it in `max(4, num_data_nodes * 2)` shards.
+When a table is created with default values, it gets partitioned in `max(4, num_data_nodes * 2)` shards.
 
 For example, a typical 3-node cluster, it will create:
 
-`max(4, 3 * 2)`
-
-`max(4, 6) = 6 shards` 
+`max(4, 3 * 2) = 6 shards` 
 
 On top of that, the default replication is the `0-1` range, a maximum of one replica.
 A replica multiplies the number of shards, therefore creating `6 primary shards` and `6 replica shards`, making
@@ -91,7 +84,7 @@ GROUP BY node ['name']
 
 The total storage being used, can be calculated as the `avg size of 1 shard` * `total_shards`.
 
-The current `taxi` table that was created:
+Applying this to the `taxi` table that was created beforehand:
 
 ```sql
 SELECT sum(size / 1_000_000) / count(*) as avg_mb_per_shard,
@@ -125,8 +118,7 @@ The following techniques will reduce the disk usage of the `average size of 1 sh
 
 Reducing disk usage often at the cost of performance.
 
-If there are columns that will not be used in aggregations (joins) and groupings (group by, order
-by),
+If there are columns that will not be used in aggregations (joins) and groupings (group by, order by),
 it will have no impact on performance and might make sense to reduce its storage footprint.
 
 Things that can be done:
@@ -309,17 +301,16 @@ CREATE TABLE IF NOT EXISTS "doc"."taxi_nocolumnstore_noindex_bestcompresion" (
 
 CrateDB default settings are optimized for performance.
 
-If some columns will never be used for aggregations or groupings, there will be no performance
-penalty.
-That might change in the future as your use case and data needs evolve, re-adding indexes or column
-store at later stages
-will need re-creating tables, which might need some downtime, depending on the setup.
+If some columns will never be used for aggregations or groupings, there will be no performance penalty.
+That might change in the future as your use case and data needs evolve,
+re-adding indexes or column store at later stages will need re-creating tables, 
+which might need some downtime, depending on the setup.
 
 It is important to evaluate well the strategy and use case.
 
 ## Extra: Data normalization
 
-One of the most common ways to reduce storage usage is to not write data more than once, by
-normalizing your tables.
+One of the most common ways to reduce storage usage is to not write data more than once,
+by normalizing your tables.
 
 Read more about it in https://en.wikipedia.org/wiki/Database_normalization
