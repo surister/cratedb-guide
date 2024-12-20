@@ -21,11 +21,11 @@ We are going to use [Yellow taxi trip - January 2024](https://www.nyc.gov/site/t
 
 Will take:
 
-- 48MB in Parquet (very optimized for storage)
-- 342MB in CSV
-- 1.2GB in JSON
-- 510MB in PostgreSQL 16.1 (Debian 16.1-1.pgdg120+1)
-- 775MB in CrateDB 5.9.3 (3 nodes, default values)
+- ~48MiB in Parquet (very optimized for storage)
+- ~342MiB in CSV
+- ~1.2GiB in JSON
+- ~510MiB in PostgreSQL 16.1 (Debian 16.1-1.pgdg120+1)
+- ~775MiB in CrateDB 5.9.3 (3 nodes, default settings)
 
 At first sight, it might look that CrateDB storage takes more than PostgreSQL,
 but we need to dive deeper to really understand what is going on.
@@ -47,7 +47,7 @@ CrateDB is a distributed database; nodes, shards, partitions and replicas are ti
 When a table is created, data is sharded and distributed among nodes. This
 means that the memory footprint depends on our replication and sharding strategy.
 
-Let's break down how the `775MB` in CrateDB and the `510MB` in PostgreSQL were
+Let's break down how the `775MiB` in CrateDB and the `510MiB` in PostgreSQL were
 obtained. For `PostgreSQL` it was straightforward:
 
 ```sql
@@ -55,9 +55,7 @@ SELECT pg_size_pretty(pg_total_relation_size('taxi_january'));
 ```
 
 For CrateDB when a table is created, sharding and replication has to be taken into account.
-
 When a table is created with default values, it gets partitioned in `max(4, num_data_nodes * 2)` shards.
-
 For example, a typical 3-node cluster, it will create:
 
 `max(4, 3 * 2) = 6 shards` 
@@ -87,19 +85,19 @@ The total storage being used, can be calculated as the `avg size of 1 shard` * `
 Applying this to the `taxi` table that was created beforehand:
 
 ```sql
-SELECT sum(size / 1_000_000) / count(*) as avg_mb_per_shard,
-       sum(size) / 1_000_000 as total_mb
+SELECT sum(size / (1024 * 1024)) / count(*) as avg_mb_per_shard,
+       sum(size) / (1024 * 1024) as total_mib
 FROM sys.shards
 WHERE table_name = 'taxi'
 
--- | avg_mb_per_shard | total_mb |
+-- | avg_mib_per_shard | total_mib |
 -- |------------------|----------|
--- | 64               | 775      |
+-- | 61               | 739      |
 
 ```
 
 
-This can be checked locally; querying `select path from sys.shards` shows the file path of the shard.
+This can be checked locally; querying `select table_name, path from sys.shards` shows the file path of the shard.
 
 ```shell
 sh-5.1# pwd
@@ -177,11 +175,11 @@ DROP TABLE "taxi_deleteme"
 
 ### Effects on storage
 
-| avg_mb_per_shard | total_mb |
-|------------------|----------|
-| 53               | 635      |
+| avg_mib_per_shard | total_mib |
+|-------------------|-----------|
+| 53                | 635       |
 
-Data was reduced `18%`
+Data was reduced `~13.11%`
 
 ## Disable the columnar store.
 
@@ -206,11 +204,11 @@ CREATE TABLE IF NOT EXISTS "doc"."taxi_nocolumnstore"(
 
 ### Effects on storage
 
-| avg_mb_per_shard | total_mb |
-|------------------|----------|
-| 53               | 639      |
+| avg_mib_per_shard | total_mib |
+|-------------------|-----------|
+| 53                | 639       |
 
-Data was reduced: `18%`, similar to `no_index`.
+Data was reduced: `~13.11%`, similar to `no_index`.
 
 ## Changing the compression algorithm
 
@@ -230,11 +228,11 @@ CREATE TABLE IF NOT EXISTS "doc"."taxi_january_nocolumnstore" (
 
 ### Effects on storage
 
-| avg_mb_per_shard | total_mb |
-|------------------|----------|
-| 44               | 536      |
+| avg_mib_per_shard | total_mib |
+|-------------------|-----------|
+| 44                | 536       |
 
-Data was reduced: `31.25%`
+Data was reduced: `~27.86%`
 
 ## All results and what to do.
 
@@ -243,8 +241,9 @@ In the following table, all the above results can be found, also different combi
 ```sql
 SELECT table_name,
        SUM(num_docs)           as records,
-       (SUM(size) / 1_000_000) as total_size_mb,
-       (SUM(size) / count(*)) / 1_000_000 as avg_size_per_shard_in_mb, (SUM(size) / SUM(num_docs) :: DOUBLE) as avg_size_in_bytes_per_record
+       (SUM(size) / (1024 * 1024)) as total_size_mb,
+       (SUM(size) / count(*)) / (1024 * 1024) as avg_size_per_shard_in_mib,
+       (SUM(size) / SUM(num_docs) :: DOUBLE) as avg_size_in_bytes_per_record
 FROM sys.shards
 WHERE
     PRIMARY
@@ -254,31 +253,30 @@ ORDER BY
     avg_size_per_shard_in_mb
 ```
 
-| table_name                                  | records | total_size_mb | avg_size_per_shard_in_mb | avg_bytes_per_record |
-|---------------------------------------------|---------|---------------|--------------------------|----------------------|
-| "taxi_nocolumnstore_noindex_bestcompresion" | 2964624 | 122           | 20                       | 41                   |
-| "taxi_nocolumnstore_bestcompression"        | 2964624 | 205           | 34                       | 69                   |
-| "taxi_noindex_bestcompression"              | 2964624 | 212           | 35                       | 71                   |
-| "taxi_nocolumnstore_noindex"                | 2964624 | 237           | 39                       | 80                   |
-| "taxi_bestcompresion"                       | 2964624 | 290           | 48                       | 98                   |
-| "taxi_noindex"                              | 2964624 | 317           | 52                       | 107                  |
-| "taxi_nocolumnstore"                        | 2964624 | 319           | 53                       | 107                  |
-| "taxi"                                      | 2964624 | 385           | 64                       | 130                  |
+| table_name                                  | records | total_size_mib | avg_size_per_shard_in_mib | avg_bytes_per_record |
+|---------------------------------------------|---------|----------------|---------------------------|----------------------|
+| "taxi_nocolumnstore_noindex_bestcompresion" | 2964624 | 122            | 20                        | 41                   |
+| "taxi_nocolumnstore_bestcompression"        | 2964624 | 205            | 34                        | 69                   |
+| "taxi_noindex_bestcompression"              | 2964624 | 212            | 35                        | 71                   |
+| "taxi_nocolumnstore_noindex"                | 2964624 | 237            | 39                        | 80                   |
+| "taxi_bestcompresion"                       | 2964624 | 290            | 48                        | 98                   |
+| "taxi_noindex"                              | 2964624 | 317            | 52                        | 107                  |
+| "taxi_nocolumnstore"                        | 2964624 | 319            | 53                        | 107                  |
+| "taxi"                                      | 2964624 | 385            | 64                        | 130                  |
 
 To summarize:
 
-1. `total_size_mb` is the sum of the disk used in `mb` of all the primary shards
+1. `total_size_mib` is the sum of the disk used in `MiB` of all the primary shards
 2. All primary shards make the full table.
 3. By default, every table will have a maximum of one replica.
 
-The original `775MB` can be calculated as:
+The original `775MiB` can be calculated as:
 
 `64mb per shard * (6 primary shards + 6 replica shards) = 768`
 
 > The result are slightly off `768 ~= 775` because in this example, decimals are being ignored.
 > The goal is to give you an idea on how tweaking some CrateDB aspect can affect storage, being
-> overly precise to the kilobyte level
-> does not matter too much.
+> overly precise to the kilobyte level does not matter too much.
 
 Query with everything applied:
 
@@ -314,3 +312,4 @@ any future overhead.
 One of the most common ways to reduce storage size is to not write data more than once, by normalizing your tables.
 
 Read more about it in https://en.wikipedia.org/wiki/Database_normalization
+
