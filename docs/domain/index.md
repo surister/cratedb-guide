@@ -17,6 +17,7 @@ are using CrateDB to build data management solutions and platforms.
 
 ```{toctree}
 :maxdepth: 1
+:hidden:
 
 telemetry/index
 analytics/index
